@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { promisify } = require('util');
 const YTDlpWrap = require('yt-dlp-wrap-plus').default;
-const { paths, getUniqueFilename } = require('./storage');
+const { paths, getUniqueFilename, ensureDirectories } = require('./storage');
 
 const access = promisify(fs.access);
 const mkdir = promisify(fs.mkdir);
@@ -16,6 +16,125 @@ const COOKIE_FILE_PATH = process.env.YTDLP_COOKIES_FILE || paths.youtubeCookiesF
 
 let ytDlpInstance = null;
 let binaryReadyPromise = null;
+
+function toAbsoluteMetadataPath(filename) {
+  if (!filename) return null;
+  if (path.isAbsolute(filename)) {
+    return filename;
+  }
+  const basename = path.basename(filename);
+  return path.join(paths.videos, basename);
+}
+
+function collectCandidatePaths(baseName, metadata) {
+  const candidates = [];
+  const metadataPath = toAbsoluteMetadataPath(metadata?._filename);
+  if (metadataPath) {
+    candidates.push(metadataPath);
+  }
+
+  const preferredExts = [];
+  if (metadata?.ext) {
+    preferredExts.push(metadata.ext);
+  }
+  preferredExts.push('mp4', 'webm', 'mkv', 'm4a', 'mp3');
+
+  const uniqueExts = Array.from(new Set(preferredExts.map((ext) => (ext || '').replace(/^\./, '')).filter(Boolean)));
+  uniqueExts.forEach((ext) => {
+    candidates.push(path.join(paths.videos, `${baseName}.${ext}`));
+  });
+
+  return candidates;
+}
+
+function findDownloadedFile(baseName, metadata) {
+  const candidates = collectCandidatePaths(baseName, metadata);
+  for (const candidate of candidates) {
+    try {
+      if (candidate && fs.existsSync(candidate)) {
+        return candidate;
+      }
+    } catch (error) {
+      console.warn('Failed to check candidate path', candidate, error.message);
+    }
+  }
+
+  try {
+    const entries = fs.readdirSync(paths.videos, { withFileTypes: false }) || [];
+    const prefix = `${baseName}.`;
+    const matched = entries.find((name) => name.startsWith(prefix) && !name.endsWith('.part'));
+    if (matched) {
+      const resolved = path.join(paths.videos, matched);
+      if (fs.existsSync(resolved)) {
+        return resolved;
+      }
+    }
+  } catch (error) {
+    console.warn('Failed to scan videos directory to resolve download path:', error.message);
+  }
+
+  return null;
+}
+
+function parseSizeToBytes(rawValue) {
+  if (!rawValue || typeof rawValue !== 'string') return null;
+  const sanitized = rawValue.replace(/[~,]/g, '').trim();
+  const match = sanitized.match(/([0-9]+(?:\.[0-9]+)?)([a-zA-Z]+)?/);
+  if (!match) return null;
+  const value = parseFloat(match[1]);
+  if (!Number.isFinite(value)) return null;
+  const unit = (match[2] || 'B').toLowerCase();
+  const table = {
+    b: 1,
+    bytes: 1,
+    kb: 1000,
+    mb: 1000 ** 2,
+    gb: 1000 ** 3,
+    tb: 1000 ** 4,
+    kib: 1024,
+    mib: 1024 ** 2,
+    gib: 1024 ** 3,
+    tib: 1024 ** 4
+  };
+  const multiplier = table[unit] || 1;
+  return Math.round(value * multiplier);
+}
+
+function parseEtaToSeconds(rawEta) {
+  if (!rawEta || typeof rawEta !== 'string') return null;
+  if (rawEta.includes('--')) return null;
+  const segments = rawEta.split(':').map((part) => parseInt(part, 10));
+  if (segments.some((num) => Number.isNaN(num))) return null;
+  if (segments.length === 3) {
+    return (segments[0] * 3600) + (segments[1] * 60) + segments[2];
+  }
+  if (segments.length === 2) {
+    return (segments[0] * 60) + segments[1];
+  }
+  return segments[0];
+}
+
+function parseProgressLine(line) {
+  if (!line || !line.includes('[download]') || !line.includes('%')) return null;
+  const percentMatch = line.match(/(\d+(?:\.\d+)?)%/);
+  if (!percentMatch) return null;
+  const percent = parseFloat(percentMatch[1]);
+  const totalMatch = line.match(/of\s+(~?[0-9.,]+\s*[a-zA-Z]+)/i);
+  const speedMatch = line.match(/at\s+([^\s]+)\s*/i);
+  const etaMatch = line.match(/ETA\s+([^\s]+)/i);
+  const totalBytes = parseSizeToBytes(totalMatch ? totalMatch[1] : null);
+  const speedValue = speedMatch ? speedMatch[1] : null;
+  const speedBytes = speedValue && speedValue.toLowerCase().includes('b/s')
+    ? parseSizeToBytes(speedValue.replace(/\/s$/i, ''))
+    : null;
+  const etaSeconds = parseEtaToSeconds(etaMatch ? etaMatch[1] : null);
+  return {
+    percent,
+    totalBytes,
+    speed: speedBytes,
+    eta: etaSeconds
+  };
+}
 
 function createError(message, code) {
   const error = new Error(message);
@@ -77,6 +196,22 @@ function runDownloadWithProgress(ytDlpWrap, execArgs, execEnv, onProgress) {
       const ytProcess = ytDlpWrap.exec(execArgs, { env: execEnv });
       let stdout = '';
       let stderr = '';
+      let stderrBuffer = '';
+      let hasNativeProgress = false;
+
+      const emitProgressUpdate = (progressData) => {
+        if (typeof onProgress !== 'function' || !progressData) {
+          return;
+        }
+        try {
+          const normalized = normalizeProgressPayload(progressData);
+          if (normalized) {
+            onProgress(normalized);
+          }
+        } catch (err) {
+          console.warn('Failed to emit progress:', err.message);
+        }
+      };
 
       if (ytProcess.stdout) {
         ytProcess.stdout.on('data', (data) => {
@@ -86,19 +221,24 @@ function runDownloadWithProgress(ytDlpWrap, execArgs, execEnv, onProgress) {
       if (ytProcess.stderr) {
         ytProcess.stderr.on('data', (data) => {
           stderr += data.toString();
+          if (!hasNativeProgress && typeof onProgress === 'function') {
+            stderrBuffer += data.toString();
+            const lines = stderrBuffer.split(/\r?\n/);
+            stderrBuffer = lines.pop();
+            lines.forEach((line) => {
+              const parsed = parseProgressLine(line);
+              if (parsed) {
+                emitProgressUpdate(parsed);
+              }
+            });
+          }
         });
       }
 
       if (typeof onProgress === 'function' && typeof ytProcess.on === 'function') {
         ytProcess.on('progress', (progressData) => {
-          try {
-            const normalized = normalizeProgressPayload(progressData);
-            if (normalized) {
-              onProgress(normalized);
-            }
-          } catch (err) {
-            console.warn('Failed to emit progress:', err.message);
-          }
+          hasNativeProgress = true;
+          emitProgressUpdate(progressData);
         });
       }
 
@@ -198,6 +338,7 @@ async function downloadYoutubeVideo(url, options = {}) {
   const { onProgress } = options;
 
   try {
+    ensureDirectories();
     await ensureBinaryAvailable();
     const ytDlpWrap = ytDlpInstance;
     const tempFilename = getUniqueFilename('youtube-video.mp4');
@@ -254,11 +395,11 @@ async function downloadYoutubeVideo(url, options = {}) {
       };
     }
 
-    const downloadedPath = metadata._filename
-      ? path.isAbsolute(metadata._filename)
-        ? metadata._filename
-        : path.join(paths.videos, metadata._filename)
-      : path.join(paths.videos, `${baseName}.${metadata.ext || 'mp4'}`);
+    const downloadedPath = findDownloadedFile(baseName, metadata);
+
+    if (!downloadedPath) {
+      throw createError('File hasil unduhan tidak ditemukan', 'YTDLP_FILE_MISSING');
+    }
 
     await access(downloadedPath).catch(() => {
       throw createError('File hasil unduhan tidak ditemukan', 'YTDLP_FILE_MISSING');
@@ -266,7 +407,8 @@ async function downloadYoutubeVideo(url, options = {}) {
 
     const stats = fs.statSync(downloadedPath);
     const safeTitle = sanitizeTitle(metadata.title || baseName);
-    const finalFilename = getUniqueFilename(`${safeTitle}.${metadata.ext || 'mp4'}`);
+    const detectedExt = metadata.ext || path.extname(downloadedPath).replace('.', '') || 'mp4';
+    const finalFilename = getUniqueFilename(`${safeTitle}.${detectedExt}`);
     const finalPath = path.join(paths.videos, finalFilename);
 
     if (downloadedPath !== finalPath) {
@@ -279,7 +421,7 @@ async function downloadYoutubeVideo(url, options = {}) {
       filepath: `/uploads/videos/${finalFilename}`,
       fullPath: finalPath,
       fileSize: stats.size,
-      format: metadata.ext || 'mp4',
+      format: detectedExt,
       resolution: metadata.width && metadata.height ? `${metadata.width}x${metadata.height}` : null,
       fps: metadata.fps || null
     };
