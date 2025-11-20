@@ -239,9 +239,19 @@ async function downloadYoutubeVideo(url, options = {}) {
 
     const result = await runDownloadWithProgress(ytDlpWrap, execArgs, execEnv, onProgress);
 
-    const metadata = parseMetadata(result);
+    let metadata = parseMetadata(result);
     if (!metadata) {
-      throw createError('Gagal mendapatkan metadata YouTube', 'YTDLP_METADATA_ERROR');
+      const guessedExt = path.extname(outputTemplate).replace('.', '') || 'mp4';
+      const fallbackPath = path.join(paths.videos, `${baseName}.${guessedExt}`);
+      metadata = {
+        _filename: fallbackPath,
+        title: baseName,
+        ext: guessedExt,
+        duration: 0,
+        width: null,
+        height: null,
+        fps: null
+      };
     }
 
     const downloadedPath = metadata._filename
@@ -250,7 +260,9 @@ async function downloadYoutubeVideo(url, options = {}) {
         : path.join(paths.videos, metadata._filename)
       : path.join(paths.videos, `${baseName}.${metadata.ext || 'mp4'}`);
 
-    await access(downloadedPath);
+    await access(downloadedPath).catch(() => {
+      throw createError('File hasil unduhan tidak ditemukan', 'YTDLP_FILE_MISSING');
+    });
 
     const stats = fs.statSync(downloadedPath);
     const safeTitle = sanitizeTitle(metadata.title || baseName);
