@@ -26,6 +26,7 @@ const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const streamingService = require('./services/streamingService');
 const schedulerService = require('./services/schedulerService');
 const PlaylistSchedule = require('./models/PlaylistSchedule');
+const { version: appVersion } = require('./package.json');
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 process.on('unhandledRejection', (reason, promise) => {
   console.error('-----------------------------------');
@@ -44,6 +45,7 @@ const port = process.env.PORT || 7575;
 const tokens = new csrf();
 ensureDirectories();
 ensureDirectories();
+app.locals.appVersion = appVersion;
 app.locals.helpers = {
   getUsername: function (req) {
     if (req.session && req.session.username) {
@@ -143,6 +145,7 @@ app.use(async (req, res, next) => {
     }
   }
   res.locals.req = req;
+  res.locals.appVersion = appVersion;
   next();
 });
 app.use(function (req, res, next) {
