@@ -22,6 +22,8 @@ function createError(message, code) {
   if (code) {
     error.code = code;
   }
+  return error;
+}
 
 function normalizeProgressPayload(progress) {
   if (!progress) return null;
@@ -116,9 +118,6 @@ function runDownloadWithProgress(ytDlpWrap, execArgs, execEnv, onProgress) {
     }
   });
 }
-  return error;
-}
-
 function getYoutubeCookiesStatus() {
   const info = {
     path: COOKIE_FILE_PATH || null,
