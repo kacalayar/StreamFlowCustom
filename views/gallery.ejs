@@ -267,6 +267,44 @@
       </div>
     </div>
 
+    <div id="youtubeModal" class="fixed inset-0 bg-black/70 hidden z-50">
+      <div class="flex items-center justify-center min-h-screen p-4">
+        <div id="youtubeModalContent"
+          class="bg-dark-800 rounded-lg shadow-xl w-full max-w-lg border border-gray-600/70 transform transition-all opacity-0 scale-95">
+
+          <div class="flex items-center justify-between p-4 border-b border-gray-600/50">
+            <h3 class="text-lg font-medium flex items-center gap-2">
+              <i class="ti ti-brand-youtube text-red-500"></i>
+              YouTube Downloader
+            </h3>
+            <button id="closeYoutubeBtn"
+              class="rounded-full w-8 h-8 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700/50 transition-colors">
+              <i class="ti ti-x"></i>
+            </button>
+          </div>
+
+          <div class="p-6 space-y-4">
+            <div>
+              <label class="text-sm font-medium text-gray-300 mb-2 block">YouTube URL</label>
+              <div class="relative">
+                <input type="text" id="youtube-url-input"
+                  class="bg-dark-700 text-white pl-10 pr-4 py-2.5 rounded-lg block w-full focus:outline-none focus:ring-1 focus:ring-primary border border-gray-600"
+                  placeholder="https://www.youtube.com/watch?v=...">
+                <i class="ti ti-link absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+              </div>
+              <p class="text-xs text-gray-500 mt-2">Pastikan video tidak dibatasi hak cipta dan dapat diunduh.</p>
+            </div>
+            <div id="youtubeDownloadAlert" class="hidden text-xs text-red-400"></div>
+            <button id="youtube-download-button"
+              class="w-full bg-red-500 hover:bg-red-600 text-white py-2.5 px-4 rounded-lg font-medium transition-colors flex items-center justify-center gap-2">
+              <i class="ti ti-download"></i>
+              <span>Download & Simpan</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div id="videoPreviewModal" class="fixed inset-0 bg-black bg-opacity-80 z-50 hidden">
       <div class="flex items-center justify-center min-h-screen p-4">
         <div class="bg-dark-800 rounded-lg shadow-xl w-full max-w-4xl">
@@ -301,6 +339,8 @@
         if (hours > 0) {
           return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
         }
+        return `${minutes}:${secs.toString().padStart(2, '0')}`;
+      }
 
       function openYoutubeModal() {
         const modal = document.getElementById('youtubeModal');
@@ -373,8 +413,7 @@
       }
       document.getElementById('youtube-download-button')?.addEventListener('click', submitYoutubeDownload);
       document.getElementById('closeYoutubeBtn')?.addEventListener('click', closeYoutubeModal);
-        return `${minutes}:${secs.toString().padStart(2, '0')}`;
-      }
+
       function formatDate(dateString) {
         if (!dateString) return 'Unknown date';
         const date = new Date(dateString);

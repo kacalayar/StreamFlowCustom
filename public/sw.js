@@ -53,6 +53,11 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
+  const requestUrl = new URL(event.request.url);
+  if (requestUrl.protocol !== 'http:' && requestUrl.protocol !== 'https:') {
+    return;
+  }
+
   if (event.request.method !== 'GET') {
     return;
   }
@@ -78,6 +83,9 @@ self.addEventListener('fetch', (event) => {
                 .then((cache) => {
                   cache.put(event.request, responseToCache);
                   console.log('Service Worker: Cached new resource', event.request.url);
+                })
+                .catch((cacheError) => {
+                  console.warn('Service Worker: Cache put skipped', cacheError.message);
                 });
 
               return response;
@@ -92,15 +100,20 @@ self.addEventListener('fetch', (event) => {
 });
 
 function isStaticResource(url) {
-  return STATIC_RESOURCES.some(resource => url.includes(resource.replace(/^\
-         url.includes('tabler-icons') ||
-         url.includes('cdn.jsdelivr.net') ||
-         url.endsWith('.css') ||
-         url.endsWith('.js') ||
-         url.endsWith('.woff2') ||
-         url.endsWith('.woff') ||
-         url.endsWith('.ttf') ||
-         url.endsWith('.svg');
+  const normalizedUrl = url.split('?')[0];
+  const isListedResource = STATIC_RESOURCES.some(resource => normalizedUrl.includes(resource.split('?')[0]));
+  const isCdnResource =
+    normalizedUrl.includes('tabler-icons') ||
+    normalizedUrl.includes('cdn.jsdelivr.net');
+  const hasStaticExtension =
+    normalizedUrl.endsWith('.css') ||
+    normalizedUrl.endsWith('.js') ||
+    normalizedUrl.endsWith('.woff2') ||
+    normalizedUrl.endsWith('.woff') ||
+    normalizedUrl.endsWith('.ttf') ||
+    normalizedUrl.endsWith('.svg');
+
+  return isListedResource || isCdnResource || hasStaticExtension;
 }
 
 self.addEventListener('message', (event) => {
