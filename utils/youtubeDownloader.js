@@ -22,6 +22,100 @@ function createError(message, code) {
   if (code) {
     error.code = code;
   }
+
+function normalizeProgressPayload(progress) {
+  if (!progress) return null;
+  const percentRaw = typeof progress.percent === 'number'
+    ? progress.percent
+    : parseFloat(String(progress.percent || '0').replace('%', ''));
+  const percent = Number.isFinite(percentRaw) ? Math.max(0, Math.min(100, percentRaw)) : 0;
+  const totalBytes = parseInt(progress.totalBytes || progress.total_bytes || progress.total || 0, 10) || null;
+  const downloadedBytes = parseInt(progress.downloadedBytes || progress.downloaded_bytes || 0, 10)
+    || (totalBytes && percent ? Math.round((percent / 100) * totalBytes) : null);
+  const speedBytes = parseFloat(progress.speed || progress.currentSpeed || progress.avgSpeed || 0) || 0;
+  const etaSeconds = parseFloat(progress.eta || progress.etaTime || 0) || null;
+
+  return {
+    percent,
+    downloadedBytes,
+    totalBytes,
+    downloadedFormatted: formatBytes(downloadedBytes),
+    totalSize: formatBytes(totalBytes),
+    speed: speedBytes,
+    speedFormatted: speedBytes ? `${formatBytes(speedBytes)}/s` : '-/-',
+    eta: etaSeconds,
+    etaFormatted: formatEta(etaSeconds)
+  };
+}
+
+function formatBytes(bytes) {
+  if (!bytes || Number.isNaN(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / Math.pow(1024, exponent);
+  return `${value.toFixed(exponent === 0 ? 0 : 2)} ${units[exponent]}`;
+}
+
+function formatEta(seconds) {
+  if (!seconds || seconds <= 0 || !Number.isFinite(seconds)) return '-';
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.round(seconds % 60);
+  if (minutes < 60) {
+    return `${minutes}m ${remainingSeconds}s`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return `${hours}h ${remainingMinutes}m`;
+}
+
+function runDownloadWithProgress(ytDlpWrap, execArgs, execEnv, onProgress) {
+  return new Promise((resolve, reject) => {
+    try {
+      const ytProcess = ytDlpWrap.exec(execArgs, { env: execEnv });
+      let stdout = '';
+      let stderr = '';
+
+      if (ytProcess.stdout) {
+        ytProcess.stdout.on('data', (data) => {
+          stdout += data.toString();
+        });
+      }
+      if (ytProcess.stderr) {
+        ytProcess.stderr.on('data', (data) => {
+          stderr += data.toString();
+        });
+      }
+
+      if (typeof onProgress === 'function' && typeof ytProcess.on === 'function') {
+        ytProcess.on('progress', (progressData) => {
+          try {
+            const normalized = normalizeProgressPayload(progressData);
+            if (normalized) {
+              onProgress(normalized);
+            }
+          } catch (err) {
+            console.warn('Failed to emit progress:', err.message);
+          }
+        });
+      }
+
+      ytProcess.once('error', (error) => {
+        reject(error);
+      });
+
+      ytProcess.once('close', (code) => {
+        if (code === 0) {
+          resolve(stdout);
+        } else {
+          reject(createError(stderr || 'Gagal mengunduh video YouTube', 'YTDLP_DOWNLOAD_ERROR'));
+        }
+      });
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
   return error;
 }
 
@@ -97,10 +191,12 @@ async function ensureBinaryAvailable() {
   return binaryReadyPromise;
 }
 
-async function downloadYoutubeVideo(url) {
+async function downloadYoutubeVideo(url, options = {}) {
   if (!url || typeof url !== 'string' || !isSupportedYoutubeUrl(url)) {
     throw createError('URL YouTube tidak valid', 'INVALID_YOUTUBE_URL');
   }
+
+  const { onProgress } = options;
 
   try {
     await ensureBinaryAvailable();
@@ -142,7 +238,7 @@ async function downloadYoutubeVideo(url) {
       }
     }
 
-    const result = await ytDlpWrap.execPromise(execArgs, { env: execEnv });
+    const result = await runDownloadWithProgress(ytDlpWrap, execArgs, execEnv, onProgress);
 
     const metadata = parseMetadata(result);
     if (!metadata) {

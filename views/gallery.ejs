@@ -317,6 +317,16 @@
               </form>
             </div>
             <div id="youtubeDownloadAlert" class="hidden text-xs text-red-400"></div>
+            <div id="youtubeProgressWrapper" class="hidden space-y-2 text-sm">
+              <div class="flex items-center justify-between text-xs text-gray-400">
+                <span id="youtubeProgressLabel">Menyiapkan unduhan...</span>
+                <span id="youtubeProgressPercent">0%</span>
+              </div>
+              <div class="w-full bg-dark-700 rounded-full h-2 overflow-hidden">
+                <div id="youtubeProgressBar" class="bg-red-500 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+              </div>
+              <div id="youtubeProgressMeta" class="text-xs text-gray-500"></div>
+            </div>
             <button id="youtube-download-button"
               class="w-full bg-red-500 hover:bg-red-600 text-white py-2.5 px-4 rounded-lg font-medium transition-colors flex items-center justify-center gap-2">
               <i class="ti ti-download"></i>
@@ -397,6 +407,9 @@
         if (alertBox) alertBox.textContent = '';
       }
 
+      let youtubeProgressSource = null;
+      let youtubeCurrentJobId = null;
+
       async function submitYoutubeDownload() {
         const urlInput = document.getElementById('youtube-url-input');
         const button = document.getElementById('youtube-download-button');
@@ -409,6 +422,14 @@
         button.disabled = true;
         button.innerHTML = '<svg class="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg><span>Mengunduh...</span>';
         hideYoutubeAlert();
+        resetYoutubeProgress();
+        const jobId = generateJobId();
+        youtubeCurrentJobId = jobId;
+        if (window.EventSource) {
+          openYoutubeProgressStream(jobId);
+        } else {
+          showYoutubeProgress();
+        }
         try {
           const response = await fetch('/api/videos/import-youtube', {
             method: 'POST',
@@ -416,7 +437,7 @@
               'Content-Type': 'application/json',
               'X-CSRF-Token': document.querySelector('input[name="_csrf"]').value
             },
-            body: JSON.stringify({ youtubeUrl: urlInput.value.trim() })
+            body: JSON.stringify({ youtubeUrl: urlInput.value.trim(), jobId })
           });
           const result = await parseJsonResponse(response);
           if (!result.success) {
@@ -430,6 +451,7 @@
           alertBox.textContent = error.message || 'Gagal mengunduh video';
           alertBox.classList.remove('hidden');
         } finally {
+          closeYoutubeProgressStream();
           button.disabled = false;
           button.innerHTML = '<i class="ti ti-download"></i><span>Download & Simpan</span>';
         }
@@ -441,6 +463,100 @@
         fetchYoutubeCookiesStatus(true);
       });
       document.getElementById('youtubeCookiesForm')?.addEventListener('submit', uploadYoutubeCookies);
+
+      function showYoutubeProgress() {
+        const wrapper = document.getElementById('youtubeProgressWrapper');
+        wrapper?.classList.remove('hidden');
+      }
+
+      function resetYoutubeProgress() {
+        const wrapper = document.getElementById('youtubeProgressWrapper');
+        const percent = document.getElementById('youtubeProgressPercent');
+        const bar = document.getElementById('youtubeProgressBar');
+        const label = document.getElementById('youtubeProgressLabel');
+        const meta = document.getElementById('youtubeProgressMeta');
+        if (wrapper && !wrapper.classList.contains('hidden')) {
+          wrapper.classList.add('hidden');
+        }
+        if (percent) percent.textContent = '0%';
+        if (bar) bar.style.width = '0%';
+        if (label) label.textContent = 'Menyiapkan unduhan...';
+        if (meta) meta.textContent = '';
+      }
+
+      function generateJobId() {
+        if (window.crypto?.randomUUID) {
+          return crypto.randomUUID();
+        }
+        return 'job-' + Date.now() + '-' + Math.floor(Math.random() * 1e6);
+      }
+
+      function openYoutubeProgressStream(jobId) {
+        closeYoutubeProgressStream();
+        showYoutubeProgress();
+        const source = new EventSource(`/api/youtube/import-progress?jobId=${encodeURIComponent(jobId)}`);
+        youtubeProgressSource = source;
+        source.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            handleYoutubeProgressUpdate(data);
+          } catch (err) {
+            console.warn('Invalid progress payload:', err);
+          }
+        };
+        source.onerror = () => {
+          closeYoutubeProgressStream();
+        };
+      }
+
+      function closeYoutubeProgressStream() {
+        if (youtubeProgressSource) {
+          youtubeProgressSource.close();
+          youtubeProgressSource = null;
+        }
+      }
+
+      function handleYoutubeProgressUpdate(data) {
+        if (!data || data.jobId !== youtubeCurrentJobId) return;
+        const wrapper = document.getElementById('youtubeProgressWrapper');
+        const percent = document.getElementById('youtubeProgressPercent');
+        const bar = document.getElementById('youtubeProgressBar');
+        const label = document.getElementById('youtubeProgressLabel');
+        const meta = document.getElementById('youtubeProgressMeta');
+        if (wrapper && wrapper.classList.contains('hidden')) {
+          wrapper.classList.remove('hidden');
+        }
+        if (typeof data.percent === 'number') {
+          const safePercent = Math.max(0, Math.min(100, data.percent));
+          if (percent) percent.textContent = `${safePercent}%`;
+          if (bar) bar.style.width = `${safePercent}%`;
+        }
+        if (label) {
+          if (data.type === 'completed') {
+            label.textContent = 'Selesai';
+          } else if (data.type === 'error') {
+            label.textContent = 'Gagal mengunduh';
+          } else {
+            label.textContent = data.percent >= 99 ? 'Finishing...' : 'Mengunduh video...';
+          }
+        }
+        if (meta) {
+          const parts = [];
+          if (data.downloadedFormatted && data.totalSize) {
+            parts.push(`${data.downloadedFormatted} / ${data.totalSize}`);
+          }
+          if (data.speedFormatted) {
+            parts.push(`Kecepatan ${data.speedFormatted}`);
+          }
+          if (data.etaFormatted && data.etaFormatted !== '-') {
+            parts.push(`Estimasi ${data.etaFormatted}`);
+          }
+          meta.textContent = parts.join(' • ');
+        }
+        if (data.type === 'completed' || data.type === 'error') {
+          closeYoutubeProgressStream();
+        }
+      }
 
       async function parseJsonResponse(response) {
         const contentType = response.headers.get('content-type') || '';

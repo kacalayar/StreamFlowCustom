@@ -6,6 +6,7 @@ const engine = require('ejs-mate');
 const os = require('os');
 const multer = require('multer');
 const fs = require('fs');
+const EventEmitter = require('events');
 const csrf = require('csrf');
 const { v4: uuidv4 } = require('uuid');
 const session = require('express-session');
@@ -28,6 +29,18 @@ const schedulerService = require('./services/schedulerService');
 const PlaylistSchedule = require('./models/PlaylistSchedule');
 const { downloadYoutubeVideo, getYoutubeCookiesStatus } = require('./utils/youtubeDownloader');
 const { version: appVersion } = require('./package.json');
+const youtubeProgressEmitter = new EventEmitter();
+youtubeProgressEmitter.setMaxListeners(0);
+
+function emitYoutubeProgress(jobId, userId, payload = {}) {
+  if (!jobId || !userId) return;
+  youtubeProgressEmitter.emit('progress', {
+    jobId,
+    userId,
+    timestamp: Date.now(),
+    ...payload
+  });
+}
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 process.on('unhandledRejection', (reason, promise) => {
   console.error('-----------------------------------');
@@ -303,8 +316,39 @@ app.post('/api/youtube/cookies', isAuthenticated, (req, res) => {
   });
 });
 
+app.get('/api/youtube/import-progress', isAuthenticated, (req, res) => {
+  const { jobId } = req.query;
+  if (!jobId) {
+    return res.status(400).json({ success: false, error: 'jobId is required' });
+  }
+
+  res.set({
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive'
+  });
+  if (typeof res.flushHeaders === 'function') {
+    res.flushHeaders();
+  }
+  res.write('retry: 5000\n\n');
+
+  const listener = (data) => {
+    if (data.jobId === jobId && data.userId === req.session.userId) {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    }
+  };
+
+  youtubeProgressEmitter.on('progress', listener);
+
+  req.on('close', () => {
+    youtubeProgressEmitter.removeListener('progress', listener);
+    res.end();
+  });
+});
+
 app.post('/api/videos/import-youtube', isAuthenticated, [
-  body('youtubeUrl').notEmpty().withMessage('YouTube URL is required')
+  body('youtubeUrl').notEmpty().withMessage('YouTube URL is required'),
+  body('jobId').notEmpty().withMessage('jobId is required')
 ], async (req, res) => {
   let downloadResult = null;
   try {
@@ -312,8 +356,15 @@ app.post('/api/videos/import-youtube', isAuthenticated, [
     if (!errors.isEmpty()) {
       return res.status(400).json({ success: false, error: errors.array()[0].msg });
     }
-    const { youtubeUrl } = req.body;
-    downloadResult = await downloadYoutubeVideo(youtubeUrl);
+    const { youtubeUrl, jobId } = req.body;
+    const userId = req.session.userId;
+    emitYoutubeProgress(jobId, userId, { type: 'started', percent: 0 });
+    downloadResult = await downloadYoutubeVideo(youtubeUrl, {
+      onProgress: (progress) => emitYoutubeProgress(jobId, userId, {
+        type: 'progress',
+        ...progress
+      })
+    });
     const fullFilePath = downloadResult.fullPath;
     const metadata = await extractVideoMetadata(fullFilePath).catch(() => ({
       duration: downloadResult.duration,
@@ -337,6 +388,7 @@ app.post('/api/videos/import-youtube', isAuthenticated, [
       user_id: req.session.userId
     };
     const video = await Video.create(videoData);
+    emitYoutubeProgress(jobId, userId, { type: 'completed', percent: 100 });
     res.json({ success: true, message: 'Video YouTube berhasil diunduh', video });
   } catch (error) {
     console.error('Error importing YouTube video:', error);
@@ -346,6 +398,12 @@ app.post('/api/videos/import-youtube', isAuthenticated, [
       } catch (cleanupErr) {
         console.error('Failed to remove downloaded file:', cleanupErr);
       }
+    }
+    if (req.body?.jobId && req.session?.userId) {
+      emitYoutubeProgress(req.body.jobId, req.session.userId, {
+        type: 'error',
+        error: error.message || 'Gagal mengunduh video YouTube'
+      });
     }
     const statusCode = error.code === 'INVALID_YOUTUBE_URL' ? 400 : 500;
     return res.status(statusCode).json({ success: false, error: error.message || 'Failed to download YouTube video' });
