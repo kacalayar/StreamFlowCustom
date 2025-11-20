@@ -10,6 +10,8 @@ const mkdir = promisify(fs.mkdir);
 const BIN_DIR = path.join(__dirname, '../bin');
 const BIN_EXT = process.platform === 'win32' ? '.exe' : '';
 const BIN_PATH = path.join(BIN_DIR, `yt-dlp${BIN_EXT}`);
+const DEFAULT_JS_RUNTIME = process.env.YTDLP_JS_RUNTIME || process.execPath;
+const COOKIE_FILE_PATH = process.env.YTDLP_COOKIES_FILE || '';
 
 let ytDlpInstance = null;
 let binaryReadyPromise = null;
@@ -87,16 +89,30 @@ async function downloadYoutubeVideo(url) {
     const baseName = path.parse(tempFilename).name;
     const outputTemplate = path.join(paths.videos, `${baseName}.%(ext)s`);
 
-    const result = await ytDlpWrap.execPromise([
+    const execArgs = [
       url,
       '--no-playlist',
-      '--no-call-home',
       '--print-json',
       '--restrict-filenames',
       '-f', 'bv*+ba/best',
       '--merge-output-format', 'mp4',
       '-o', outputTemplate
-    ]);
+    ];
+
+    if (COOKIE_FILE_PATH) {
+      if (!fs.existsSync(COOKIE_FILE_PATH)) {
+        console.warn('YT-DLP cookies file not found at', COOKIE_FILE_PATH);
+      } else {
+        execArgs.push('--cookies', COOKIE_FILE_PATH);
+      }
+    }
+
+    const execEnv = { ...process.env };
+    if (DEFAULT_JS_RUNTIME && !execEnv.YTDLP_JS_RUNTIME) {
+      execEnv.YTDLP_JS_RUNTIME = DEFAULT_JS_RUNTIME;
+    }
+
+    const result = await ytDlpWrap.execPromise(execArgs, { env: execEnv });
 
     const metadata = parseMetadata(result);
     if (!metadata) {
