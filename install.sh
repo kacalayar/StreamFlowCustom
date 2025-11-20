@@ -23,7 +23,7 @@ sudo apt install ffmpeg git -y
 
 echo "📥 Clone repository..."
 git clone https://github.com/kacalayar/StreamFlowCustom
-cd StreamFlowCustom
+cd streamflowcustom
 
 echo "⚙️ Installing dependencies..."
 npm install
