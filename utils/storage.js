@@ -1,10 +1,18 @@
 const fs = require('fs-extra');
 const path = require('path');
+
+const storageRoot = path.join(__dirname, '../storage');
+const youtubeStorageDir = path.join(storageRoot, 'youtube');
+const uploadsVideosDir = path.join(__dirname, '../public/uploads/videos');
+const uploadsThumbnailsDir = path.join(__dirname, '../public/uploads/thumbnails');
+const uploadsAvatarsDir = path.join(__dirname, '../public/uploads/avatars');
+
 const ensureDirectories = () => {
   const dirs = [
-    path.join(__dirname, '../public/uploads/videos'),
-    path.join(__dirname, '../public/uploads/thumbnails'),
-    path.join(__dirname, '../public/uploads/avatars')
+    uploadsVideosDir,
+    uploadsThumbnailsDir,
+    uploadsAvatarsDir,
+    youtubeStorageDir
   ];
   dirs.forEach(dir => {
     fs.ensureDirSync(dir);
@@ -23,8 +31,10 @@ module.exports = {
   ensureDirectories,
   getUniqueFilename,
   paths: {
-    videos: path.join(__dirname, '../public/uploads/videos'),
-    thumbnails: path.join(__dirname, '../public/uploads/thumbnails'),
-    avatars: path.join(__dirname, '../public/uploads/avatars')
+    videos: uploadsVideosDir,
+    thumbnails: uploadsThumbnailsDir,
+    avatars: uploadsAvatarsDir,
+    cookiesDir: youtubeStorageDir,
+    youtubeCookiesFile: path.join(youtubeStorageDir, 'yt-cookies.txt')
   }
 };

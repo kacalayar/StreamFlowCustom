@@ -10,8 +10,9 @@ const mkdir = promisify(fs.mkdir);
 const BIN_DIR = path.join(__dirname, '../bin');
 const BIN_EXT = process.platform === 'win32' ? '.exe' : '';
 const BIN_PATH = path.join(BIN_DIR, `yt-dlp${BIN_EXT}`);
+const NODE_BINARY_DIR = path.dirname(process.execPath);
 const DEFAULT_JS_RUNTIME = process.env.YTDLP_JS_RUNTIME || process.execPath;
-const COOKIE_FILE_PATH = process.env.YTDLP_COOKIES_FILE || '';
+const COOKIE_FILE_PATH = process.env.YTDLP_COOKIES_FILE || paths.youtubeCookiesFile;
 
 let ytDlpInstance = null;
 let binaryReadyPromise = null;
@@ -21,6 +22,25 @@ function createError(message, code) {
   if (code) {
     error.code = code;
   }
+
+function getYoutubeCookiesStatus() {
+  const info = {
+    path: COOKIE_FILE_PATH || null,
+    exists: false,
+    size: 0,
+    updatedAt: null
+  };
+  if (!COOKIE_FILE_PATH) {
+    return info;
+  }
+  if (fs.existsSync(COOKIE_FILE_PATH)) {
+    const stats = fs.statSync(COOKIE_FILE_PATH);
+    info.exists = stats.size > 0;
+    info.size = stats.size;
+    info.updatedAt = stats.mtime;
+  }
+  return info;
+}
   return error;
 }
 
@@ -99,17 +119,27 @@ async function downloadYoutubeVideo(url) {
       '-o', outputTemplate
     ];
 
-    if (COOKIE_FILE_PATH) {
-      if (!fs.existsSync(COOKIE_FILE_PATH)) {
-        console.warn('YT-DLP cookies file not found at', COOKIE_FILE_PATH);
-      } else {
-        execArgs.push('--cookies', COOKIE_FILE_PATH);
-      }
+    const cookiesStatus = getYoutubeCookiesStatus();
+    if (cookiesStatus.exists) {
+      execArgs.push('--cookies', COOKIE_FILE_PATH);
+    } else if (COOKIE_FILE_PATH) {
+      console.warn('YT-DLP cookies file not found or empty at', COOKIE_FILE_PATH);
     }
+
+    execArgs.push('--extractor-args', 'youtube:player_client=default');
 
     const execEnv = { ...process.env };
     if (DEFAULT_JS_RUNTIME && !execEnv.YTDLP_JS_RUNTIME) {
       execEnv.YTDLP_JS_RUNTIME = DEFAULT_JS_RUNTIME;
+    }
+    if (NODE_BINARY_DIR) {
+      const currentPath = execEnv.PATH || execEnv.Path || '';
+      const pathSeparator = path.delimiter;
+      const pathSegments = currentPath.split(pathSeparator).filter(Boolean);
+      if (!pathSegments.includes(NODE_BINARY_DIR)) {
+        execEnv.PATH = `${NODE_BINARY_DIR}${pathSeparator}${currentPath}`.replace(new RegExp(`${pathSeparator}$`), '');
+        execEnv.Path = execEnv.PATH;
+      }
     }
 
     const result = await ytDlpWrap.execPromise(execArgs, { env: execEnv });
@@ -158,5 +188,6 @@ async function downloadYoutubeVideo(url) {
 }
 
 module.exports = {
-  downloadYoutubeVideo
+  downloadYoutubeVideo,
+  getYoutubeCookiesStatus
 };
