@@ -31,15 +31,23 @@ const { downloadYoutubeVideo, getYoutubeCookiesStatus } = require('./utils/youtu
 const { version: appVersion } = require('./package.json');
 const youtubeProgressEmitter = new EventEmitter();
 youtubeProgressEmitter.setMaxListeners(0);
+const youtubeProgressStore = new Map();
 
 function emitYoutubeProgress(jobId, userId, payload = {}) {
   if (!jobId || !userId) return;
-  youtubeProgressEmitter.emit('progress', {
+  const eventPayload = {
     jobId,
     userId,
     timestamp: Date.now(),
     ...payload
-  });
+  };
+  youtubeProgressStore.set(jobId, eventPayload);
+  youtubeProgressEmitter.emit('progress', eventPayload);
+  if (payload.type === 'completed' || payload.type === 'error') {
+    setTimeout(() => {
+      youtubeProgressStore.delete(jobId);
+    }, 60 * 1000);
+  }
 }
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 process.on('unhandledRejection', (reason, promise) => {
@@ -339,6 +347,11 @@ app.get('/api/youtube/import-progress', isAuthenticated, (req, res) => {
   };
 
   youtubeProgressEmitter.on('progress', listener);
+
+  const cached = youtubeProgressStore.get(jobId);
+  if (cached && cached.userId === req.session.userId) {
+    res.write(`data: ${JSON.stringify(cached)}\n\n`);
+  }
 
   req.on('close', () => {
     youtubeProgressEmitter.removeListener('progress', listener);
