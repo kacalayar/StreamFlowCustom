@@ -307,9 +307,9 @@ app.post('/api/videos/import-youtube', isAuthenticated, [
       file_size: downloadResult.fileSize,
       duration: metadata.duration || downloadResult.duration,
       format: downloadResult.format || metadata.format,
-      resolution: metadata.resolution,
+      resolution: metadata.resolution || downloadResult.resolution,
       bitrate: metadata.bitrate,
-      fps: metadata.fps,
+      fps: metadata.fps || downloadResult.fps,
       user_id: req.session.userId
     };
     const video = await Video.create(videoData);
