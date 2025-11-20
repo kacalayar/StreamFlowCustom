@@ -26,6 +26,7 @@ const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const streamingService = require('./services/streamingService');
 const schedulerService = require('./services/schedulerService');
 const PlaylistSchedule = require('./models/PlaylistSchedule');
+const { downloadYoutubeVideo } = require('./utils/youtubeDownloader');
 const { version: appVersion } = require('./package.json');
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 process.on('unhandledRejection', (reason, promise) => {
@@ -45,6 +46,48 @@ const port = process.env.PORT || 7575;
 const tokens = new csrf();
 ensureDirectories();
 ensureDirectories();
+const thumbnailsDir = path.join(__dirname, 'public', 'uploads', 'thumbnails');
+const videosDir = path.join(__dirname, 'public', 'uploads', 'videos');
+
+function extractVideoMetadata(fullPath) {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(fullPath, (err, metadata) => {
+      if (err) {
+        return reject(err);
+      }
+      const videoStream = metadata.streams.find(stream => stream.codec_type === 'video');
+      const duration = metadata.format.duration || 0;
+      const format = metadata.format.format_name || '';
+      const resolution = videoStream ? `${videoStream.width}x${videoStream.height}` : '';
+      const bitrate = metadata.format.bit_rate ? Math.round(parseInt(metadata.format.bit_rate, 10) / 1000) : null;
+      let fps = null;
+      if (videoStream && videoStream.avg_frame_rate) {
+        const [num, den] = videoStream.avg_frame_rate.split('/');
+        if (den && parseInt(den, 10) !== 0) {
+          fps = Math.round((parseInt(num, 10) / parseInt(den, 10)) * 100) / 100;
+        } else {
+          fps = parseInt(num, 10) || null;
+        }
+      }
+      resolve({ duration, format, resolution, bitrate, fps });
+    });
+  });
+}
+
+function generateThumbnailFromVideo(sourcePath, filename) {
+  const thumbnailPath = `/uploads/thumbnails/${filename}`;
+  return new Promise((resolve, reject) => {
+    ffmpeg(sourcePath)
+      .screenshots({
+        timestamps: ['10%'],
+        filename,
+        folder: thumbnailsDir,
+        size: '854x480'
+      })
+      .on('end', () => resolve(thumbnailPath))
+      .on('error', reject);
+  });
+}
 app.locals.appVersion = appVersion;
 app.locals.helpers = {
   getUsername: function (req) {
@@ -233,6 +276,55 @@ app.use('/uploads/avatars', (req, res, next) => {
     fs.createReadStream(file).pipe(res);
   } else {
     next();
+  }
+});
+
+app.post('/api/videos/import-youtube', isAuthenticated, [
+  body('youtubeUrl').notEmpty().withMessage('YouTube URL is required')
+], async (req, res) => {
+  let downloadResult = null;
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ success: false, error: errors.array()[0].msg });
+    }
+    const { youtubeUrl } = req.body;
+    downloadResult = await downloadYoutubeVideo(youtubeUrl);
+    const fullFilePath = downloadResult.fullPath;
+    const metadata = await extractVideoMetadata(fullFilePath).catch(() => ({
+      duration: downloadResult.duration,
+      format: downloadResult.format,
+      resolution: null,
+      bitrate: null,
+      fps: null
+    }));
+    const thumbnailFilename = `thumb-${path.parse(path.basename(downloadResult.filepath)).name}.jpg`;
+    const thumbnailPath = await generateThumbnailFromVideo(fullFilePath, thumbnailFilename).catch(() => null);
+    const videoData = {
+      title: downloadResult.title,
+      filepath: downloadResult.filepath,
+      thumbnail_path: thumbnailPath,
+      file_size: downloadResult.fileSize,
+      duration: metadata.duration || downloadResult.duration,
+      format: downloadResult.format || metadata.format,
+      resolution: metadata.resolution,
+      bitrate: metadata.bitrate,
+      fps: metadata.fps,
+      user_id: req.session.userId
+    };
+    const video = await Video.create(videoData);
+    res.json({ success: true, message: 'Video YouTube berhasil diunduh', video });
+  } catch (error) {
+    console.error('Error importing YouTube video:', error);
+    if (downloadResult?.fullPath && fs.existsSync(downloadResult.fullPath)) {
+      try {
+        fs.unlinkSync(downloadResult.fullPath);
+      } catch (cleanupErr) {
+        console.error('Failed to remove downloaded file:', cleanupErr);
+      }
+    }
+    const statusCode = error.code === 'INVALID_YOUTUBE_URL' ? 400 : 500;
+    return res.status(statusCode).json({ success: false, error: error.message || 'Failed to download YouTube video' });
   }
 });
 

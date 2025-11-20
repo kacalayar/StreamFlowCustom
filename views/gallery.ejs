@@ -23,6 +23,11 @@
           <i class="ti ti-brand-google-drive text-[#4285F4]"></i>
           <span>Import from Drive</span>
         </button>
+        <button onclick="openYoutubeModal()"
+          class="flex items-center gap-2 bg-red-600/20 border border-red-500/40 hover:bg-red-600/30 text-white px-4 py-2 rounded-lg transition-colors">
+          <i class="ti ti-brand-youtube text-red-400"></i>
+          <span>Download from YouTube</span>
+        </button>
       </div>
     </div>
 
@@ -244,10 +249,10 @@
       <span id="toast-message"></span>
     </div>
 
-    <div id="gDriveModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden transition-opacity">
+    <div id="gDriveModal" class="fixed inset-0 bg-black/70 hidden z-50">
       <div class="flex items-center justify-center min-h-screen p-4">
         <div id="gdriveModalContent"
-          class="bg-dark-800 rounded-lg shadow-xl w-full max-w-md border border-gray-600/50 transform transition-all opacity-0 scale-95">
+          class="bg-dark-800 rounded-lg shadow-xl w-full max-w-lg border border-gray-600/70 transform transition-all opacity-0 scale-95">
 
           <div class="flex items-center justify-between p-4 border-b border-gray-600/50">
             <h3 class="text-lg font-medium">Google Drive Import</h3>
@@ -296,6 +301,78 @@
         if (hours > 0) {
           return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
         }
+
+      function openYoutubeModal() {
+        const modal = document.getElementById('youtubeModal');
+        const modalContent = document.getElementById('youtubeModalContent');
+        if (!modal || !modalContent) return;
+        modal.classList.remove('hidden');
+        setTimeout(() => {
+          modalContent.classList.remove('opacity-0', 'scale-95');
+          modalContent.classList.add('opacity-100', 'scale-100');
+        }, 10);
+        document.body.classList.add('overflow-hidden');
+        document.getElementById('youtube-url-input').value = '';
+        hideYoutubeAlert();
+      }
+
+      function closeYoutubeModal() {
+        const modal = document.getElementById('youtubeModal');
+        const modalContent = document.getElementById('youtubeModalContent');
+        if (!modal || !modalContent) return;
+        modalContent.classList.remove('opacity-100', 'scale-100');
+        modalContent.classList.add('opacity-0', 'scale-95');
+        setTimeout(() => {
+          modal.classList.add('hidden');
+          document.body.classList.remove('overflow-hidden');
+        }, 200);
+      }
+
+      function hideYoutubeAlert() {
+        const alertBox = document.getElementById('youtubeDownloadAlert');
+        alertBox?.classList.add('hidden');
+        if (alertBox) alertBox.textContent = '';
+      }
+
+      async function submitYoutubeDownload() {
+        const urlInput = document.getElementById('youtube-url-input');
+        const button = document.getElementById('youtube-download-button');
+        const alertBox = document.getElementById('youtubeDownloadAlert');
+        if (!urlInput.value.trim()) {
+          alertBox.textContent = 'Masukkan URL YouTube terlebih dahulu';
+          alertBox.classList.remove('hidden');
+          return;
+        }
+        button.disabled = true;
+        button.innerHTML = '<svg class="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg><span>Mengunduh...</span>';
+        hideYoutubeAlert();
+        try {
+          const response = await fetch('/api/videos/import-youtube', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRF-Token': document.querySelector('input[name="_csrf"]').value
+            },
+            body: JSON.stringify({ youtubeUrl: urlInput.value.trim() })
+          });
+          const result = await response.json();
+          if (!result.success) {
+            throw new Error(result.error || 'Gagal mengunduh video YouTube');
+          }
+          showToast('success', 'Video berhasil diunduh dari YouTube');
+          closeYoutubeModal();
+          setTimeout(() => window.location.reload(), 1200);
+        } catch (error) {
+          console.error('YouTube download error:', error);
+          alertBox.textContent = error.message || 'Gagal mengunduh video';
+          alertBox.classList.remove('hidden');
+        } finally {
+          button.disabled = false;
+          button.innerHTML = '<i class="ti ti-download"></i><span>Download & Simpan</span>';
+        }
+      }
+      document.getElementById('youtube-download-button')?.addEventListener('click', submitYoutubeDownload);
+      document.getElementById('closeYoutubeBtn')?.addEventListener('click', closeYoutubeModal);
         return `${minutes}:${secs.toString().padStart(2, '0')}`;
       }
       function formatDate(dateString) {
