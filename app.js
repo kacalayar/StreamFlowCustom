@@ -28,6 +28,7 @@ const streamingService = require('./services/streamingService');
 const schedulerService = require('./services/schedulerService');
 const PlaylistSchedule = require('./models/PlaylistSchedule');
 const { downloadYoutubeVideo, getYoutubeCookiesStatus } = require('./utils/youtubeDownloader');
+const fileManagerService = require('./services/fileManager');
 const { version: appVersion } = require('./package.json');
 const youtubeProgressEmitter = new EventEmitter();
 youtubeProgressEmitter.setMaxListeners(0);
@@ -322,6 +323,29 @@ app.post('/api/youtube/cookies', isAuthenticated, (req, res) => {
     const status = getYoutubeCookiesStatus();
     res.json({ success: true, message: 'Cookies YouTube berhasil diperbarui', status });
   });
+});
+
+app.get('/api/files', isAuthenticated, async (req, res) => {
+  try {
+    const { type = 'videos' } = req.query;
+    const files = await fileManagerService.listFiles(type);
+    res.json({ success: true, files });
+  } catch (error) {
+    console.error('Error listing files:', error);
+    res.status(500).json({ success: false, error: error.message || 'Gagal membaca file' });
+  }
+});
+
+app.delete('/api/files', isAuthenticated, async (req, res) => {
+  try {
+    const { type = 'videos', files } = req.body || {};
+    const result = await fileManagerService.deleteFiles(type, files);
+    const refreshed = await fileManagerService.listFiles(type);
+    res.json({ success: true, result, files: refreshed });
+  } catch (error) {
+    console.error('Error deleting files:', error);
+    res.status(500).json({ success: false, error: error.message || 'Gagal menghapus file' });
+  }
 });
 
 app.get('/api/youtube/import-progress', isAuthenticated, (req, res) => {
@@ -856,6 +880,20 @@ app.get('/gallery', isAuthenticated, async (req, res) => {
     });
   } catch (error) {
     console.error('Gallery error:', error);
+    res.redirect('/dashboard');
+  }
+});
+
+app.get('/files', isAuthenticated, async (req, res) => {
+  try {
+    const files = await fileManagerService.listFiles('videos');
+    res.render('files', {
+      title: 'File Manager',
+      active: 'files',
+      files
+    });
+  } catch (error) {
+    console.error('File manager error:', error);
     res.redirect('/dashboard');
   }
 });

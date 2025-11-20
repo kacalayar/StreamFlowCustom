@@ -1,0 +1,242 @@
+<% layout('layout') -%>
+<div class="flex flex-col gap-6">
+  <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div>
+      <h2 class="text-2xl font-bold">File Manager</h2>
+      <p class="text-gray-400 text-sm">Kelola berkas di direktori uploads/videos</p>
+    </div>
+    <div class="flex flex-wrap gap-3">
+      <button id="refreshFilesBtn" class="flex items-center gap-2 bg-dark-700 hover:bg-dark-600 px-4 py-2 rounded-lg text-sm">
+        <i class="ti ti-refresh"></i>
+        <span>Refresh</span>
+      </button>
+      <button id="deleteSelectedBtn" class="flex items-center gap-2 bg-red-500/80 hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed px-4 py-2 rounded-lg text-sm" disabled>
+        <i class="ti ti-trash"></i>
+        <span>Hapus Terpilih</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <div class="bg-gray-800 rounded-lg p-4">
+      <p class="text-xs text-gray-400">Total File</p>
+      <p id="summaryTotal" class="text-2xl font-bold mt-1">0</p>
+    </div>
+    <div class="bg-gray-800 rounded-lg p-4">
+      <p class="text-xs text-gray-400">Terdaftar di Gallery</p>
+      <p id="summaryRegistered" class="text-2xl font-bold mt-1 text-green-400">0</p>
+    </div>
+    <div class="bg-gray-800 rounded-lg p-4">
+      <p class="text-xs text-gray-400">Orphan / Partial</p>
+      <p id="summaryOrphan" class="text-2xl font-bold mt-1 text-yellow-400">0</p>
+    </div>
+  </div>
+
+  <div class="bg-gray-800 rounded-lg overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="min-w-full text-left">
+        <thead class="bg-dark-700 text-gray-300 text-xs uppercase tracking-wider">
+          <tr>
+            <th class="px-4 py-3 w-12">
+              <input type="checkbox" id="selectAllFiles" class="accent-primary">
+            </th>
+            <th class="px-4 py-3">Nama File</th>
+            <th class="px-4 py-3">Ukuran</th>
+            <th class="px-4 py-3">Diperbarui</th>
+            <th class="px-4 py-3">Status</th>
+            <th class="px-4 py-3 text-right">Aksi</th>
+          </tr>
+        </thead>
+        <tbody id="filesTableBody" class="divide-y divide-dark-700">
+        </tbody>
+      </table>
+    </div>
+    <div id="filesEmptyState" class="hidden text-center text-gray-400 py-8">
+      <i class="ti ti-folder-open text-3xl mb-2"></i>
+      <p>Tidak ada file yang ditemukan.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    const initialFiles = <%- JSON.stringify(files || []) %>;
+    let fileList = initialFiles;
+    const selectedFiles = new Set();
+    const filesTableBody = document.getElementById('filesTableBody');
+    const emptyState = document.getElementById('filesEmptyState');
+    const selectAllCheckbox = document.getElementById('selectAllFiles');
+    const deleteBtn = document.getElementById('deleteSelectedBtn');
+    const refreshBtn = document.getElementById('refreshFilesBtn');
+    const summaryTotal = document.getElementById('summaryTotal');
+    const summaryRegistered = document.getElementById('summaryRegistered');
+    const summaryOrphan = document.getElementById('summaryOrphan');
+    const csrfToken = '<%= csrfToken %>';
+
+    renderFiles(fileList);
+
+    function formatBytes(bytes) {
+      if (!bytes) return '0 B';
+      const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+      const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+      const value = bytes / Math.pow(1024, exponent);
+      return `${value.toFixed(exponent === 0 ? 0 : 1)} ${units[exponent]}`;
+    }
+
+    function formatDate(date) {
+      const d = new Date(date);
+      return d.toLocaleString('id-ID');
+    }
+
+    function renderFiles(list) {
+      if (!list || list.length === 0) {
+        filesTableBody.innerHTML = '';
+        emptyState.classList.remove('hidden');
+      } else {
+        emptyState.classList.add('hidden');
+        filesTableBody.innerHTML = list.map((file) => {
+          const checked = selectedFiles.has(file.name) ? 'checked' : '';
+          const badgeClass = file.status === 'registered'
+            ? 'text-green-400'
+            : file.status === 'partial'
+              ? 'text-yellow-400'
+              : 'text-red-400';
+          const badgeText = file.status === 'registered'
+            ? 'Registered'
+            : file.status === 'partial'
+              ? 'Partial / Temp'
+              : 'Orphan';
+          return `
+            <tr>
+              <td class="px-4 py-3">
+                <input type="checkbox" class="file-select accent-primary" data-name="${file.name}" ${checked}>
+              </td>
+              <td class="px-4 py-3 text-sm">
+                <div class="font-medium text-white">${file.name}</div>
+                <div class="text-xs text-gray-500">${file.type.toUpperCase()}</div>
+              </td>
+              <td class="px-4 py-3 text-sm text-gray-300">${formatBytes(file.size)}</td>
+              <td class="px-4 py-3 text-sm text-gray-300">${formatDate(file.modifiedAt)}</td>
+              <td class="px-4 py-3 text-sm ${badgeClass}">${badgeText}</td>
+              <td class="px-4 py-3 text-right">
+                <button class="text-red-400 hover:text-red-300 text-sm" data-delete="${file.name}">Hapus</button>
+              </td>
+            </tr>
+          `;
+        }).join('');
+      }
+      updateSummary(list);
+      updateSelectionState();
+    }
+
+    function updateSummary(list) {
+      const total = list.length;
+      const registered = list.filter((file) => file.status === 'registered').length;
+      const orphan = total - registered;
+      summaryTotal.textContent = total;
+      summaryRegistered.textContent = registered;
+      summaryOrphan.textContent = orphan;
+    }
+
+    filesTableBody.addEventListener('change', (event) => {
+      if (event.target.classList.contains('file-select')) {
+        const name = event.target.dataset.name;
+        if (event.target.checked) {
+          selectedFiles.add(name);
+        } else {
+          selectedFiles.delete(name);
+        }
+        updateSelectionState();
+      }
+    });
+
+    filesTableBody.addEventListener('click', (event) => {
+      const btn = event.target.closest('[data-delete]');
+      if (!btn) return;
+      const fileName = btn.dataset.delete;
+      confirmDelete([fileName]);
+    });
+
+    selectAllCheckbox.addEventListener('change', () => {
+      if (selectAllCheckbox.checked) {
+        fileList.forEach((file) => selectedFiles.add(file.name));
+      } else {
+        selectedFiles.clear();
+      }
+      renderFiles(fileList);
+    });
+
+    function updateSelectionState() {
+      deleteBtn.disabled = selectedFiles.size === 0;
+      if (fileList.length === 0) {
+        selectAllCheckbox.checked = false;
+        selectAllCheckbox.indeterminate = false;
+        return;
+      }
+      const selectedCount = [...selectedFiles].filter((name) => fileList.some((file) => file.name === name)).length;
+      selectAllCheckbox.checked = selectedCount === fileList.length;
+      selectAllCheckbox.indeterminate = selectedCount > 0 && selectedCount < fileList.length;
+    }
+
+    deleteBtn.addEventListener('click', () => {
+      if (selectedFiles.size === 0) return;
+      confirmDelete(Array.from(selectedFiles));
+    });
+
+    function confirmDelete(names) {
+      if (!names || names.length === 0) return;
+      if (!confirm(`Hapus ${names.length} file?`)) return;
+      deleteFiles(names);
+    }
+
+    async function deleteFiles(names) {
+      deleteBtn.disabled = true;
+      try {
+        const response = await fetch('/api/files', {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': csrfToken
+          },
+          body: JSON.stringify({ type: 'videos', files: names })
+        });
+        const result = await response.json();
+        if (!result.success) {
+          throw new Error(result.error || 'Gagal menghapus file');
+        }
+        fileList = result.files || [];
+        names.forEach((name) => selectedFiles.delete(name));
+        renderFiles(fileList);
+        showToast('success', 'File berhasil dihapus');
+      } catch (error) {
+        console.error('Delete files error:', error);
+        showToast('error', error.message || 'Gagal menghapus file');
+      } finally {
+        updateSelectionState();
+      }
+    }
+
+    refreshBtn.addEventListener('click', fetchFiles);
+
+    async function fetchFiles() {
+      refreshBtn.disabled = true;
+      refreshBtn.classList.add('opacity-60');
+      try {
+        const response = await fetch('/api/files?type=videos');
+        const data = await response.json();
+        if (!data.success) {
+          throw new Error(data.error || 'Gagal memuat file');
+        }
+        fileList = data.files || [];
+        selectedFiles.clear();
+        renderFiles(fileList);
+      } catch (error) {
+        console.error('Fetch files error:', error);
+        showToast('error', error.message || 'Gagal memuat file');
+      } finally {
+        refreshBtn.disabled = false;
+        refreshBtn.classList.remove('opacity-60');
+      }
+    }
+  })();
+</script>
