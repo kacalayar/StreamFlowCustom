@@ -294,6 +294,28 @@
               </div>
               <p class="text-xs text-gray-500 mt-2">Pastikan video tidak dibatasi hak cipta dan dapat diunduh.</p>
             </div>
+            <div class="border border-gray-700 rounded-lg p-4 bg-dark-750">
+              <div class="flex items-center justify-between mb-3">
+                <div>
+                  <p class="text-sm font-medium text-gray-200">Cookies YouTube</p>
+                  <p class="text-xs text-gray-500" id="youtube-cookies-status">Memeriksa status...</p>
+                </div>
+                <button id="refreshYoutubeCookiesStatus" class="text-xs text-primary hover:text-primary/80 flex items-center gap-1">
+                  <i class="ti ti-refresh"></i> Perbarui
+                </button>
+              </div>
+              <form id="youtubeCookiesForm" class="space-y-2">
+                <label class="text-xs text-gray-400">Upload cookies.txt (export dari browser)</label>
+                <input type="file" name="cookiesFile" accept=".txt,.json"
+                  class="block w-full text-sm text-gray-200 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-primary/20 file:text-primary hover:file:bg-primary/30">
+                <button type="submit"
+                  class="w-full text-sm bg-primary/20 hover:bg-primary/30 text-primary font-medium py-2 rounded-md flex items-center justify-center gap-2">
+                  <i class="ti ti-upload"></i>
+                  <span>Upload Cookies</span>
+                </button>
+                <p class="text-xs text-gray-500">Format yang didukung: Netscape cookies .txt (yt-dlp) atau JSON.</p>
+              </form>
+            </div>
             <div id="youtubeDownloadAlert" class="hidden text-xs text-red-400"></div>
             <button id="youtube-download-button"
               class="w-full bg-red-500 hover:bg-red-600 text-white py-2.5 px-4 rounded-lg font-medium transition-colors flex items-center justify-center gap-2">
@@ -354,6 +376,7 @@
         document.body.classList.add('overflow-hidden');
         document.getElementById('youtube-url-input').value = '';
         hideYoutubeAlert();
+        fetchYoutubeCookiesStatus();
       }
 
       function closeYoutubeModal() {
@@ -413,6 +436,78 @@
       }
       document.getElementById('youtube-download-button')?.addEventListener('click', submitYoutubeDownload);
       document.getElementById('closeYoutubeBtn')?.addEventListener('click', closeYoutubeModal);
+      document.getElementById('refreshYoutubeCookiesStatus')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        fetchYoutubeCookiesStatus(true);
+      });
+      document.getElementById('youtubeCookiesForm')?.addEventListener('submit', uploadYoutubeCookies);
+
+      async function fetchYoutubeCookiesStatus(showToastOnSuccess = false) {
+        const statusLabel = document.getElementById('youtube-cookies-status');
+        if (!statusLabel) return;
+        statusLabel.textContent = 'Memeriksa status...';
+        try {
+          const res = await fetch('/api/youtube/cookies/status');
+          const data = await res.json();
+          if (!data.success) {
+            throw new Error(data.error || 'Gagal membaca status cookies');
+          }
+          const { status } = data;
+          if (status?.exists) {
+            const size = formatFileSize(status.size || 0);
+            const updatedAt = status.updatedAt ? new Date(status.updatedAt).toLocaleString('id-ID') : '-';
+            statusLabel.textContent = `Aktif • ${size} • diperbarui ${updatedAt}`;
+            if (showToastOnSuccess) {
+              showToast('success', 'Status cookies berhasil diperbarui');
+            }
+          } else {
+            statusLabel.textContent = 'Belum ada cookies. Upload terlebih dahulu.';
+            if (showToastOnSuccess) {
+              showToast('warning', 'Belum ada cookies tersimpan');
+            }
+          }
+        } catch (error) {
+          console.error('Failed to fetch cookies status:', error);
+          statusLabel.textContent = 'Gagal membaca status cookies';
+          showToast('error', error.message || 'Gagal membaca status cookies');
+        }
+      }
+
+      async function uploadYoutubeCookies(event) {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const fileInput = form.querySelector('input[name="cookiesFile"]');
+        if (!fileInput?.files?.length) {
+          showToast('warning', 'Pilih file cookies terlebih dahulu');
+          return;
+        }
+        const submitBtn = form.querySelector('button[type="submit"]');
+        const originalLabel = submitBtn.innerHTML;
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<svg class="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg><span>Mengunggah...</span>';
+        try {
+          const formData = new FormData();
+          formData.append('cookiesFile', fileInput.files[0]);
+          formData.append('_csrf', document.querySelector('input[name="_csrf"]').value);
+          const response = await fetch('/api/youtube/cookies', {
+            method: 'POST',
+            body: formData
+          });
+          const result = await response.json();
+          if (!result.success) {
+            throw new Error(result.error || 'Gagal mengunggah cookies');
+          }
+          fileInput.value = '';
+          showToast('success', result.message || 'Cookies berhasil diunggah');
+          fetchYoutubeCookiesStatus();
+        } catch (error) {
+          console.error('Upload cookies error:', error);
+          showToast('error', error.message || 'Gagal mengunggah cookies');
+        } finally {
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = originalLabel;
+        }
+      }
 
       function formatDate(dateString) {
         if (!dateString) return 'Unknown date';

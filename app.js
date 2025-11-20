@@ -16,7 +16,7 @@ const rateLimit = require('express-rate-limit');
 const User = require('./models/User');
 const { db, checkIfUsersExist } = require('./db/database');
 const systemMonitor = require('./services/systemMonitor');
-const { uploadVideo, upload } = require('./middleware/uploadMiddleware');
+const { uploadVideo, upload, uploadYoutubeCookies } = require('./middleware/uploadMiddleware');
 const { ensureDirectories } = require('./utils/storage');
 const { getVideoInfo, generateThumbnail } = require('./utils/videoProcessor');
 const Video = require('./models/Video');
@@ -26,7 +26,7 @@ const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const streamingService = require('./services/streamingService');
 const schedulerService = require('./services/schedulerService');
 const PlaylistSchedule = require('./models/PlaylistSchedule');
-const { downloadYoutubeVideo } = require('./utils/youtubeDownloader');
+const { downloadYoutubeVideo, getYoutubeCookiesStatus } = require('./utils/youtubeDownloader');
 const { version: appVersion } = require('./package.json');
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 process.on('unhandledRejection', (reason, promise) => {
@@ -277,6 +277,30 @@ app.use('/uploads/avatars', (req, res, next) => {
   } else {
     next();
   }
+});
+
+app.get('/api/youtube/cookies/status', isAuthenticated, (req, res) => {
+  try {
+    const status = getYoutubeCookiesStatus();
+    res.json({ success: true, status });
+  } catch (error) {
+    console.error('Error reading YouTube cookies status:', error);
+    res.status(500).json({ success: false, error: 'Gagal membaca status cookies YouTube' });
+  }
+});
+
+app.post('/api/youtube/cookies', isAuthenticated, (req, res) => {
+  uploadYoutubeCookies.single('cookiesFile')(req, res, (err) => {
+    if (err) {
+      console.error('Error uploading YouTube cookies:', err);
+      return res.status(400).json({ success: false, error: err.message || 'Gagal mengunggah cookies' });
+    }
+    if (!req.file) {
+      return res.status(400).json({ success: false, error: 'File cookies wajib diunggah' });
+    }
+    const status = getYoutubeCookiesStatus();
+    res.json({ success: true, message: 'Cookies YouTube berhasil diperbarui', status });
+  });
 });
 
 app.post('/api/videos/import-youtube', isAuthenticated, [
