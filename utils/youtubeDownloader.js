@@ -22,6 +22,8 @@ function createError(message, code) {
   if (code) {
     error.code = code;
   }
+  return error;
+}
 
 function getYoutubeCookiesStatus() {
   const info = {
@@ -40,8 +42,6 @@ function getYoutubeCookiesStatus() {
     info.updatedAt = stats.mtime;
   }
   return info;
-}
-  return error;
 }
 
 function sanitizeTitle(title = '') {
