@@ -127,7 +127,7 @@
               </td>
               <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
                 <div class="flex space-x-2">
-                  <button onclick="editUser('<%= user.id %>', '<%= user.username %>', '<%= user.user_role %>', '<%= user.status %>', '<%= user.avatar_path || '' %>')" 
+                  <button onclick="editUser('<%= user.id %>', '<%= user.username %>', '<%= user.user_role %>', '<%= user.status %>', '<%= user.avatar_path %>')" 
                     class="text-blue-400 hover:text-blue-300 transition-colors" title="Edit User">
                     <i class="ti ti-edit"></i>
                   </button>
@@ -407,6 +407,8 @@
 
 <script>
 let currentAction = null;
+let currentStreamsUserId = null;
+let currentStreamsUsername = null;
 
 function showToast(message, type = 'success') {
   const toast = document.getElementById('toast');
@@ -757,6 +759,9 @@ function showStreamModal(element) {
   const userId = element.dataset.userId;
   const username = element.dataset.username;
   
+  currentStreamsUserId = userId;
+  currentStreamsUsername = username;
+
   const modal = document.getElementById('streamModal');
   const streamList = document.getElementById('streamList');
   const title = document.getElementById('streamModalTitle');
@@ -776,7 +781,7 @@ function showStreamModal(element) {
       
       if (data.success && data.streams && data.streams.length > 0) {
         streamList.innerHTML = data.streams.map(stream => `
-          <div class="flex items-center justify-between p-4 bg-dark-700 rounded-lg border border-gray-600/50 hover:bg-dark-600/50 transition-colors">
+          <div class="flex items-center justify-between p-4 bg-dark-700 rounded-lg border border-gray-600/50 hover:bg-dark-600/50 transition-colors" data-stream-card-id="${stream.id}">
             <div class="flex items-center space-x-4">
               <div class="w-16 h-12 bg-gray-600 rounded-lg overflow-hidden flex-shrink-0">
                 ${stream.video_thumbnail ? 
@@ -799,15 +804,41 @@ function showStreamModal(element) {
                   stream.status === 'live' ? 'bg-red-600/20 text-red-300 border border-red-600/30' : 
                   stream.status === 'scheduled' ? 'bg-yellow-600/20 text-yellow-300 border border-yellow-600/30' :
                   'bg-gray-600/20 text-gray-300 border border-gray-600/30'
-                }">
+                }" data-stream-status-pill>
                   ${stream.status === 'live' ? 
                     '<span class="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse mr-1.5"></span>Live' : 
                     stream.status === 'scheduled' ? 'Scheduled' : 'Offline'
                   }
                 </span>
-                ${stream.start_time ? `<span class="text-xs text-gray-400">Started: ${formatDate(stream.start_time)}</span>` : 
-                  stream.status === 'scheduled' ? `<span class="text-xs text-gray-400">Not started yet</span>` :
-                  `<span class="text-xs text-gray-400">Never started</span>`}
+                ${stream.start_time ? `<span class="text-xs text-gray-400" data-stream-status-detail>Started: ${formatDate(stream.start_time)}</span>` : 
+                  stream.status === 'scheduled' ? `<span class="text-xs text-gray-400" data-stream-status-detail>Not started yet</span>` :
+                  `<span class="text-xs text-gray-400" data-stream-status-detail>Never started</span>`}
+                <div class="flex items-center gap-2 mt-1">
+                  <button
+                    class="px-2.5 py-1 text-xs rounded-md border transition-colors ${
+                      stream.status === 'live'
+                        ? 'border-gray-600 text-gray-500 cursor-not-allowed opacity-50'
+                        : 'border-green-600 text-green-300 hover:bg-green-600/10'
+                    }"
+                    data-stream-action="start"
+                    data-stream-id="${stream.id}"
+                    ${stream.status === 'live' ? 'disabled' : ''}
+                  >
+                    Start
+                  </button>
+                  <button
+                    class="px-2.5 py-1 text-xs rounded-md border transition-colors ${
+                      stream.status === 'live'
+                        ? 'border-red-600 text-red-300 hover:bg-red-600/10'
+                        : 'border-gray-600 text-gray-500 cursor-not-allowed opacity-50'
+                    }"
+                    data-stream-action="stop"
+                    data-stream-id="${stream.id}"
+                    ${stream.status !== 'live' ? 'disabled' : ''}
+                  >
+                    Stop
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -835,6 +866,47 @@ function closeStreamModal() {
   modal.querySelector('.bg-dark-800').classList.add('scale-95');
   modal.classList.add('opacity-0', 'pointer-events-none');
 }
+
+async function updateStreamStatus(streamId, status) {
+  try {
+    const response = await fetch(`/api/streams/${encodeURIComponent(streamId)}/status`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ status })
+    });
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error(data.error || 'Failed to update stream status');
+    }
+    showToast(`Stream ${status === 'live' ? 'started' : 'stopped'} successfully`, 'success');
+
+    if (currentStreamsUserId) {
+      showStreamModal({
+        dataset: { userId: currentStreamsUserId, username: currentStreamsUsername }
+      });
+    }
+  } catch (error) {
+    console.error('Error updating stream status:', error);
+    showToast(error.message || 'Failed to update stream status', 'error');
+  }
+}
+
+document.getElementById('streamList').addEventListener('click', function (event) {
+  const btn = event.target.closest('[data-stream-action]');
+  if (!btn) return;
+
+  const action = btn.getAttribute('data-stream-action');
+  const streamId = btn.getAttribute('data-stream-id');
+  if (!streamId) return;
+
+  if (action === 'start') {
+    updateStreamStatus(streamId, 'live');
+  } else if (action === 'stop') {
+    updateStreamStatus(streamId, 'offline');
+  }
+});
 
 function formatDate(dateString) {
       if (!dateString) return 'Unknown';

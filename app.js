@@ -2175,10 +2175,12 @@ app.post('/api/streams/:id/status', isAuthenticated, [
     if (!stream) {
       return res.status(404).json({ success: false, error: 'Stream not found' });
     }
-    if (stream.user_id !== req.session.userId) {
+    const isAdminUser = req.session.user_role === 'admin';
+    if (!isAdminUser && stream.user_id !== req.session.userId) {
       return res.status(403).json({ success: false, error: 'Not authorized' });
     }
     const newStatus = req.body.status;
+    const ownerUserId = isAdminUser ? stream.user_id : req.session.userId;
     if (newStatus === 'live') {
       if (stream.status === 'live') {
         return res.json({
@@ -2225,7 +2227,7 @@ app.post('/api/streams/:id/status', isAuthenticated, [
         });
         console.log(`Scheduled stream ${streamId} was cancelled`);
       }
-      const result = await Stream.updateStatus(streamId, 'offline', req.session.userId);
+      const result = await Stream.updateStatus(streamId, 'offline', ownerUserId);
       if (!result.updated) {
         return res.status(404).json({
           success: false,
@@ -2234,7 +2236,7 @@ app.post('/api/streams/:id/status', isAuthenticated, [
       }
       return res.json({ success: true, stream: result });
     } else {
-      const result = await Stream.updateStatus(streamId, newStatus, req.session.userId);
+      const result = await Stream.updateStatus(streamId, newStatus, ownerUserId);
       if (!result.updated) {
         return res.status(404).json({
           success: false,
