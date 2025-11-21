@@ -900,6 +900,17 @@ app.get('/files', isAuthenticated, async (req, res) => {
     res.redirect('/dashboard');
   }
 });
+app.get('/logs', isAdmin, async (req, res) => {
+  try {
+    res.render('logs', {
+      title: 'Stream Logs',
+      active: 'logs'
+    });
+  } catch (error) {
+    console.error('Logs page error:', error);
+    res.redirect('/dashboard');
+  }
+});
 app.get('/settings', isAuthenticated, async (req, res) => {
   try {
     const user = await User.findById(req.session.userId);

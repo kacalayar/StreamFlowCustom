@@ -1,0 +1,174 @@
+<% layout('layout') -%>
+<div class="flex flex-col gap-6">
+  <div class="flex items-center justify-between gap-4">
+    <div>
+      <h2 class="text-2xl font-bold">Stream Logs</h2>
+      <p class="text-gray-400 text-sm">Monitoring log FFmpeg untuk setiap stream (admin only)</p>
+    </div>
+    <button id="refreshLogsBtn" class="flex items-center gap-2 bg-dark-700 hover:bg-dark-600 px-4 py-2 rounded-lg text-sm">
+      <i class="ti ti-refresh"></i>
+      <span>Refresh</span>
+    </button>
+  </div>
+
+  <div class="bg-gray-800 rounded-lg overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="min-w-full text-left">
+        <thead class="bg-dark-700 text-gray-300 text-xs uppercase tracking-wider">
+          <tr>
+            <th class="px-4 py-3">Stream</th>
+            <th class="px-4 py-3">Status</th>
+            <th class="px-4 py-3">Platform</th>
+            <th class="px-4 py-3">Updated</th>
+            <th class="px-4 py-3 text-right">Aksi</th>
+          </tr>
+        </thead>
+        <tbody id="streamsTableBody" class="divide-y divide-dark-700"></tbody>
+      </table>
+    </div>
+    <div id="streamsEmptyState" class="hidden text-center text-gray-400 py-8">
+      <i class="ti ti-broadcast text-3xl mb-2"></i>
+      <p>Tidak ada stream yang ditemukan.</p>
+    </div>
+  </div>
+
+  <div class="bg-gray-800 rounded-lg p-4 h-80 flex flex-col">
+    <div class="flex items-center justify-between mb-2">
+      <div>
+        <p class="text-sm font-medium text-gray-200">Log Stream</p>
+        <p id="logStreamTitle" class="text-xs text-gray-500">Pilih stream untuk melihat log</p>
+      </div>
+      <button id="clearLogViewBtn" class="text-xs text-gray-400 hover:text-gray-200 flex items-center gap-1">
+        <i class="ti ti-x"></i>
+        <span>Clear</span>
+      </button>
+    </div>
+    <div id="logContainer" class="flex-1 bg-dark-900/60 rounded-md border border-gray-700 overflow-auto text-xs font-mono p-3 whitespace-pre-wrap">
+      <div class="text-gray-500">Log akan muncul di sini...</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    const tableBody = document.getElementById('streamsTableBody');
+    const emptyState = document.getElementById('streamsEmptyState');
+    const refreshBtn = document.getElementById('refreshLogsBtn');
+    const logContainer = document.getElementById('logContainer');
+    const logTitle = document.getElementById('logStreamTitle');
+    const clearLogBtn = document.getElementById('clearLogViewBtn');
+
+    let currentStreamId = null;
+
+    function formatDate(date) {
+      if (!date) return '-';
+      const d = new Date(date);
+      return d.toLocaleString('id-ID');
+    }
+
+    function renderStreams(streams) {
+      if (!streams || streams.length === 0) {
+        tableBody.innerHTML = '';
+        emptyState.classList.remove('hidden');
+        return;
+      }
+      emptyState.classList.add('hidden');
+      tableBody.innerHTML = streams.map((s) => {
+        const statusColor = s.status === 'live'
+          ? 'text-green-400'
+          : s.status === 'scheduled'
+            ? 'text-yellow-400'
+            : 'text-gray-300';
+        return `
+          <tr>
+            <td class="px-4 py-3 text-sm">
+              <div class="font-medium text-white truncate max-w-xs" title="${s.title || ''}">${s.title || '(No title)'}</div>
+              <div class="text-xs text-gray-500">ID: ${s.id}</div>
+            </td>
+            <td class="px-4 py-3 text-sm ${statusColor}">${s.status}</td>
+            <td class="px-4 py-3 text-sm text-gray-300">${s.platform || '-'}</td>
+            <td class="px-4 py-3 text-sm text-gray-300">${formatDate(s.status_updated_at)}</td>
+            <td class="px-4 py-3 text-right">
+              <button class="text-xs text-primary hover:text-primary/80" data-log-stream-id="${s.id}">
+                Lihat Log
+              </button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    async function fetchStreams() {
+      try {
+        refreshBtn.disabled = true;
+        refreshBtn.classList.add('opacity-60');
+        const res = await fetch('/api/streams');
+        const data = await res.json();
+        if (!data.success) {
+          throw new Error(data.error || 'Gagal memuat stream');
+        }
+        renderStreams(data.streams || []);
+      } catch (error) {
+        console.error('Fetch streams error:', error);
+        showToast('error', error.message || 'Gagal memuat stream');
+      } finally {
+        refreshBtn.disabled = false;
+        refreshBtn.classList.remove('opacity-60');
+      }
+    }
+
+    async function fetchStreamLogs(streamId) {
+      try {
+        const res = await fetch(`/api/streams/${encodeURIComponent(streamId)}/logs`);
+        const data = await res.json();
+        if (!data.success) {
+          throw new Error(data.error || 'Gagal memuat log stream');
+        }
+        currentStreamId = streamId;
+        updateLogView(streamId, data.logs || [], data.isActive || false);
+      } catch (error) {
+        console.error('Fetch stream logs error:', error);
+        showToast('error', error.message || 'Gagal memuat log stream');
+      }
+    }
+
+    function updateLogView(streamId, logs, isActive) {
+      if (!logContainer) return;
+      if (!logs || logs.length === 0) {
+        logContainer.innerHTML = '<div class="text-gray-500">Belum ada log untuk stream ini.</div>';
+      } else {
+        const lines = logs.map((entry) => {
+          const ts = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString('id-ID') : '';
+          return `[${ts}] ${entry.message}`;
+        });
+        logContainer.textContent = lines.join('\n');
+        logContainer.scrollTop = logContainer.scrollHeight;
+      }
+      if (logTitle) {
+        logTitle.textContent = `Stream ID: ${streamId} ${isActive ? '(LIVE)' : ''}`;
+      }
+    }
+
+    tableBody.addEventListener('click', (event) => {
+      const btn = event.target.closest('[data-log-stream-id]');
+      if (!btn) return;
+      const streamId = btn.getAttribute('data-log-stream-id');
+      if (!streamId) return;
+      fetchStreamLogs(streamId);
+    });
+
+    refreshBtn.addEventListener('click', fetchStreams);
+
+    clearLogBtn.addEventListener('click', () => {
+      currentStreamId = null;
+      if (logContainer) {
+        logContainer.innerHTML = '<div class="text-gray-500">Log akan muncul di sini...</div>';
+      }
+      if (logTitle) {
+        logTitle.textContent = 'Pilih stream untuk melihat log';
+      }
+    });
+
+    fetchStreams();
+  })();
+</script>
