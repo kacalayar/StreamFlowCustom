@@ -66,7 +66,12 @@ async function listFiles(type = 'videos', userId = null, isAdmin = false) {
       const fullPath = path.join(target.dir, entry);
       const stats = await fs.stat(fullPath);
       if (!stats.isFile()) continue;
-      files.push(buildFileMeta(entry, stats, registeredSet));
+      const meta = buildFileMeta(entry, stats, registeredSet);
+      // Untuk user non-admin, hanya tampilkan file yang terdaftar (milik user tsb di tabel videos)
+      if (!isAdmin && type === 'videos' && !meta.registered) {
+        continue;
+      }
+      files.push(meta);
     } catch (error) {
       console.warn('Skipping file due to error:', entry, error.message);
     }
