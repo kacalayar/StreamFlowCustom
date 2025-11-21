@@ -237,9 +237,10 @@ async function startStream(streamId) {
     addStreamLog(streamId, `Starting stream with command: ${fullCommand}`);
     console.log(`Starting stream: ${fullCommand}`);
     const ffmpegProcess = spawn(ffmpegPath, ffmpegArgs, {
-      detached: true,
       stdio: ['ignore', 'pipe', 'pipe']
     });
+    console.log(`[StreamingService] Started FFmpeg for stream ${streamId} with PID ${ffmpegProcess.pid}`);
+    addStreamLog(streamId, `FFmpeg started with PID ${ffmpegProcess.pid}`);
     activeStreams.set(streamId, ffmpegProcess);
     await Stream.updateStatus(streamId, 'live', stream.user_id, { startTimeOverride: startTimeIso });
     ffmpegProcess.stdout.on('data', (data) => {
@@ -369,7 +370,7 @@ async function startStream(streamId) {
         console.error(`Error updating stream status: ${error.message}`);
       }
     });
-    ffmpegProcess.unref();
+    // Removed unref() call
     if (typeof schedulerService !== 'undefined') {
       const durationMinutes = Number(stream.duration);
       if (Number.isFinite(durationMinutes) && durationMinutes > 0) {
@@ -414,12 +415,14 @@ async function stopStream(streamId, options = {}) {
       return { success: false, error: 'Stream is not active' };
     }
     addStreamLog(streamId, 'Stopping stream...');
-    console.log(`[StreamingService] Stopping active stream ${streamId}`);
+    console.log(`[StreamingService] Stopping active stream ${streamId}, FFmpeg PID ${ffmpegProcess.pid}`);
     const stopOptions = { keepStatusLive, skipHistory, skipSchedulerCallback, processed: false };
     manuallyStoppingStreams.add(streamId);
     manualStopOptions.set(streamId, stopOptions);
     try {
       ffmpegProcess.kill('SIGTERM');
+      console.log(`[StreamingService] Sent SIGTERM to FFmpeg PID ${ffmpegProcess.pid} for stream ${streamId}`);
+      addStreamLog(streamId, `Sent SIGTERM to FFmpeg PID ${ffmpegProcess.pid}`);
     } catch (killError) {
       console.error(`[StreamingService] Error killing FFmpeg process: ${killError.message}`);
       manuallyStoppingStreams.delete(streamId);
