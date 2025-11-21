@@ -2098,13 +2098,16 @@ app.get('/api/streams/:id', isAuthenticated, async (req, res) => {
 });
 app.put('/api/streams/:id', isAuthenticated, async (req, res) => {
   try {
-    const stream = await Stream.findById(req.params.id);
+    const streamId = req.params.id;
+    const stream = await Stream.findById(streamId);
     if (!stream) {
       return res.status(404).json({ success: false, error: 'Stream not found' });
     }
     if (stream.user_id !== req.session.userId) {
       return res.status(403).json({ success: false, error: 'Not authorized to update this stream' });
     }
+
+    const wasLive = stream.status === 'live';
     const updateData = {};
     if (req.body.streamTitle) updateData.title = req.body.streamTitle;
     if (req.body.videoId) updateData.video_id = req.body.videoId;
@@ -2139,8 +2142,25 @@ app.put('/api/streams/:id', isAuthenticated, async (req, res) => {
       updateData.status = 'offline';
     }
     
-    const updatedStream = await Stream.update(req.params.id, updateData);
-    res.json({ success: true, stream: updatedStream });
+    const updatedStream = await Stream.update(streamId, updateData);
+
+    if (wasLive && !updatedStream.schedule_time && updatedStream.status !== 'scheduled') {
+      try {
+        await streamingService.stopStream(streamId);
+        const result = await streamingService.startStream(streamId);
+        if (!result.success) {
+          console.error('Auto-restart stream failed after update:', result.error);
+          return res.status(500).json({ success: false, error: result.error || 'Failed to restart stream after update' });
+        }
+        const reloaded = await Stream.getStreamWithVideo(streamId);
+        return res.json({ success: true, stream: reloaded, autoRestarted: true, isAdvancedMode: result.isAdvancedMode });
+      } catch (restartError) {
+        console.error('Error during auto-restart of stream after update:', restartError);
+        return res.status(500).json({ success: false, error: 'Stream updated but failed to restart with new settings' });
+      }
+    }
+
+    res.json({ success: true, stream: updatedStream, autoRestarted: false });
   } catch (error) {
     console.error('Error updating stream:', error);
     res.status(500).json({ success: false, error: 'Failed to update stream' });
