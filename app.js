@@ -328,7 +328,8 @@ app.post('/api/youtube/cookies', isAuthenticated, (req, res) => {
 app.get('/api/files', isAuthenticated, async (req, res) => {
   try {
     const { type = 'videos' } = req.query;
-    const files = await fileManagerService.listFiles(type);
+    const isAdminUser = req.session.user_role === 'admin';
+    const files = await fileManagerService.listFiles(type, req.session.userId, isAdminUser);
     res.json({ success: true, files });
   } catch (error) {
     console.error('Error listing files:', error);
@@ -339,8 +340,9 @@ app.get('/api/files', isAuthenticated, async (req, res) => {
 app.delete('/api/files', isAuthenticated, async (req, res) => {
   try {
     const { type = 'videos', files } = req.body || {};
-    const result = await fileManagerService.deleteFiles(type, files);
-    const refreshed = await fileManagerService.listFiles(type);
+    const isAdminUser = req.session.user_role === 'admin';
+    const result = await fileManagerService.deleteFiles(type, files, req.session.userId, isAdminUser);
+    const refreshed = await fileManagerService.listFiles(type, req.session.userId, isAdminUser);
     res.json({ success: true, result, files: refreshed });
   } catch (error) {
     console.error('Error deleting files:', error);
@@ -886,7 +888,8 @@ app.get('/gallery', isAuthenticated, async (req, res) => {
 
 app.get('/files', isAuthenticated, async (req, res) => {
   try {
-    const files = await fileManagerService.listFiles('videos');
+    const isAdminUser = req.session.user_role === 'admin';
+    const files = await fileManagerService.listFiles('videos', req.session.userId, isAdminUser);
     res.render('files', {
       title: 'File Manager',
       active: 'files',

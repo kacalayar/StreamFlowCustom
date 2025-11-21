@@ -6,9 +6,9 @@ const FILE_TARGETS = {
   videos: {
     dir: path.join(__dirname, '../public/uploads/videos'),
     label: 'Videos',
-    dbResolver: async () => {
+    dbResolver: async (userId = null, isAdmin = false) => {
       try {
-        const records = await Video.findAll();
+        const records = await Video.findAll(isAdmin ? null : userId);
         return new Set((records || []).map((video) => path.basename(video.filepath || '')));
       } catch (error) {
         console.error('Failed to resolve registered videos:', error);
@@ -52,9 +52,9 @@ function buildFileMeta(fileName, stats, registeredSet) {
   };
 }
 
-async function listFiles(type = 'videos') {
+async function listFiles(type = 'videos', userId = null, isAdmin = false) {
   const target = await ensureTarget(type);
-  const registeredSet = await target.dbResolver();
+  const registeredSet = await target.dbResolver(userId, isAdmin);
   const entries = await fs.readdir(target.dir).catch((error) => {
     console.error('Failed to read directory:', error);
     return [];
@@ -75,18 +75,33 @@ async function listFiles(type = 'videos') {
   return files;
 }
 
-async function deleteFiles(type = 'videos', names = []) {
+async function deleteFiles(type = 'videos', names = [], userId = null, isAdmin = false) {
   if (!Array.isArray(names) || names.length === 0) {
     throw new Error('Daftar file yang akan dihapus wajib diisi');
   }
   const target = await ensureTarget(type);
   const results = { deleted: [], failed: [] };
 
+  let allowedNames = null;
+  if (type === 'videos' && !isAdmin && userId) {
+    try {
+      const records = await Video.findAll(userId);
+      allowedNames = new Set((records || []).map((video) => path.basename(video.filepath || '')));
+    } catch (error) {
+      console.error('Failed to resolve allowed videos for user:', error);
+      allowedNames = new Set();
+    }
+  }
+
   for (const fileName of names) {
     const safeName = path.basename(fileName);
     const fullPath = path.join(target.dir, safeName);
     if (!fullPath.startsWith(target.dir)) {
       results.failed.push({ name: safeName, reason: 'Path tidak valid' });
+      continue;
+    }
+    if (allowedNames && !allowedNames.has(safeName)) {
+      results.failed.push({ name: safeName, reason: 'Tidak diizinkan menghapus file milik user lain' });
       continue;
     }
     try {
